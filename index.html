@@ -27,6 +27,22 @@ h2{margin:0 0 14px;font-size:18px}
 #res button:hover:not(:disabled){background:#e3f6ea}
 #res small{color:var(--mut);display:block}
 #res .none{padding:12px 14px;color:var(--mut);font-size:14px}
+.logo,.ph{width:34px;height:34px;border-radius:50%;flex:none}
+.logo{object-fit:contain;background:#fff;border:1px solid var(--line)}
+.ph{display:inline-flex;align-items:center;justify-content:center;background:var(--c);color:#fff;font-weight:800;font-size:12px}
+.lb{display:flex;align-items:center;gap:8px}
+.rk{display:grid;grid-template-columns:34px 1fr auto;gap:4px 12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.rk.me{background:#e3f6ea;margin:0 -10px;padding:8px 10px;border-radius:6px}
+.rk .n{font-weight:600}.rk .v{text-align:right;font-weight:800}.rk .v small{display:block;color:var(--mut);font-weight:400}
+.rk .tr{grid-column:2/4;height:6px;background:var(--bg);border-radius:3px;overflow:hidden}.rk .tr i{display:block;height:100%;background:var(--c)}
+.pbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}.pbar select{width:auto;min-width:240px;margin-left:auto}
+.pt{width:100%;border-collapse:collapse;font-size:14px}.pt th,.pt td{padding:8px;border-bottom:1px solid var(--line);text-align:right}
+.pt th:first-child,.pt td:first-child{text-align:left}.pt tbody tr{cursor:pointer}.pt tbody tr:hover{background:#e3f6ea}
+.loc{margin-bottom:14px}.loc span{color:var(--mut);font-size:13px;margin-left:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{background:#fff;color:var(--ink);border:1px solid var(--line);padding:4px 10px;border-radius:14px;font-weight:400;font-size:13px}
+.chip:hover:not(:disabled){background:var(--jp);color:#fff}
+.none{color:var(--mut);font-size:14px}
 .sel{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 label{font-size:13px;color:var(--mut);display:block;margin-bottom:4px}
 select,input{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff}
@@ -87,10 +103,12 @@ button:disabled{opacity:.5;cursor:wait}button:hover:not(:disabled){background:va
       <div class="kpi"><span>Mesas reportadas</span><b id="k4">—</b><em id="k4b">—</em></div>
     </div>
     <div class="charts">
+      <div class="card wide"><h2>Resultados por partido</h2><div id="tabla"></div></div>
       <div class="card"><h2>JP frente al resto</h2><div class="box"><canvas id="c1"></canvas></div></div>
       <div class="card"><h2>Ranking de partidos</h2><div class="box"><canvas id="c2"></canvas></div></div>
       <div class="card wide"><h2>Votos por distrito: JP vs. otros</h2><div class="box"><canvas id="c3"></canvas></div></div>
       <div class="card wide"><h2>Avance de mesas por distrito (%)</h2><div class="box"><canvas id="c4"></canvas></div></div>
+      <div class="card wide"><h2>Mesas que faltan reportar</h2><div id="pend"></div></div>
     </div>
   </section>
 </main>
@@ -122,8 +140,17 @@ let DATA = {centros:{},totales:{},filas:[]}, charts = {}, formTouched = false;
 const fmt = n => Number(n||0).toLocaleString('es-PE');
 
 // ---------- Formulario ----------
-$('inputs').innerHTML = P.map(p => `<div class="p" style="--c:${p.c}"><label>${p.label}</label>
+// Logo: busca logos/<clave>.png; si no existe, muestra un círculo con las iniciales
+const logo = p => `<img class="logo" src="logos/${p.k}.png" alt="" data-c="${p.c}" data-i="${p.k==='jp'?'JP':p.label.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}">`;
+function fixLogos(root){
+  root.querySelectorAll('img.logo').forEach(i => i.onerror = () => {
+    const s = document.createElement('span'); s.className = 'ph';
+    s.style.setProperty('--c', i.dataset.c); s.textContent = i.dataset.i; i.replaceWith(s);
+  });
+}
+$('inputs').innerHTML = P.map(p => `<div class="p" style="--c:${p.c}"><label class="lb">${logo(p)}${p.label}</label>
   <input type="number" min="0" inputmode="numeric" placeholder="0" data-k="${p.k}"></div>`).join('');
+fixLogos($('inputs'));
 const inputs = [...document.querySelectorAll('#inputs input')];
 inputs.forEach(i => i.addEventListener('input', () => {
   formTouched = true;
@@ -222,6 +249,53 @@ function mk(id, cfg){
   charts[id] = new Chart($(id), cfg);
 }
 
+function renderTabla(T, valid, all){
+  const rows = P.slice().sort((a,b)=>(T[b.k]||0)-(T[a.k]||0));
+  const top = Math.max(1, ...rows.map(p=>T[p.k]||0));
+  $('tabla').innerHTML = rows.map(p => {
+    const v = T[p.k]||0, base = VALID.includes(p) ? valid : all;
+    return `<div class="rk${p.k==='jp'?' me':''}" style="--c:${p.c}">${logo(p)}<span class="n">${p.label}</span>
+      <span class="v">${fmt(v)}<small>${base?(v/base*100).toFixed(2):'0.00'}%</small></span>
+      <div class="tr"><i style="width:${v/top*100}%"></i></div></div>`;
+  }).join('');
+  fixLogos($('tabla'));
+}
+
+let pendSel = '', pendList = [], pendDist = [];
+function renderPend(){
+  const el = $('pend'), F = DATA.filas || [];
+  if (!F.length){ el.innerHTML = '<p class="none">Actualiza el Apps Script para ver las mesas pendientes.</p>'; return; }
+  const by = {};
+  F.forEach(r => {
+    const d = by[r.distrito] ||= {t:0, p:0, l:{}};
+    d.t++;
+    if (!r.votos.some(v=>v>0)){ d.p++; (d.l[r.local] ||= []).push(r.mesa); }
+  });
+  pendDist = Object.keys(by).sort();
+  const tot = pendDist.reduce((a,d)=>a+by[d].p, 0);
+  pendList = [];
+  let h = `<div class="pbar"><span><b style="font-size:22px">${fmt(tot)}</b> pendientes de ${fmt(F.length)} mesas</span>
+    <select id="pd"><option value="">Todos los distritos</option>${pendDist.map(d=>`<option value="${d}"${d===pendSel?' selected':''}>${d} · ${by[d].p} pendientes</option>`).join('')}</select></div>`;
+  if (!pendSel || !by[pendSel]){
+    h += `<div style="overflow-x:auto"><table class="pt"><thead><tr><th>Distrito</th><th>Mesas</th><th>Reportadas</th><th>Pendientes</th></tr></thead><tbody>` +
+      pendDist.map((d,i)=>`<tr data-i="${i}"><td>${d}</td><td>${by[d].t}</td><td>${by[d].t-by[d].p}</td><td><b>${by[d].p}</b></td></tr>`).join('') + `</tbody></table></div>
+      <p class="none">Toca un distrito para ver qué mesas faltan.</p>`;
+  } else {
+    const L = by[pendSel].l, ls = Object.keys(L).sort();
+    h += ls.length ? ls.map(l => `<div class="loc"><b>${l}</b><span>${L[l].length} pendientes</span><div class="chips">` +
+      L[l].slice().sort((a,b)=>a-b).map(m => { pendList.push({d:pendSel,l,m}); return `<button type="button" class="chip" data-n="${pendList.length-1}">${m}</button>`; }).join('') + `</div></div>`).join('')
+      : '<p class="none">Todas las mesas de este distrito ya reportaron.</p>';
+  }
+  el.innerHTML = h;
+}
+$('pend').addEventListener('change', e => { if (e.target.id==='pd'){ pendSel = e.target.value; renderPend(); } });
+$('pend').addEventListener('click', e => {
+  const c = e.target.closest('.chip');
+  if (c){ const h = pendList[c.dataset.n]; pick(h.d, h.l, h.m); return; }
+  const tr = e.target.closest('tr[data-i]');
+  if (tr){ pendSel = pendDist[tr.dataset.i]; renderPend(); }
+});
+
 function render(){
   const T = DATA.totales, jp = T.jp||0;
   const valid = VALID.reduce((a,p)=>a+(T[p.k]||0),0);
@@ -247,6 +321,7 @@ function render(){
   mk('c2',{type:'bar',data:{labels:all12.map(p=>p.label),datasets:[{data:all12.map(p=>T[p.k]||0),backgroundColor:all12.map(p=>p.c),borderRadius:4}]},
     options:{...base,indexAxis:'y',plugins:{legend:{display:false}}}});
 
+  renderTabla(T, valid, all); renderPend();
   // Gráficos por distrito (requieren "filas" del Apps Script)
   const F = DATA.filas || [], D = {};
   F.forEach(r=>{
