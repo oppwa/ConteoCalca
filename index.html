@@ -43,6 +43,12 @@ h2{margin:0 0 14px;font-size:18px}
 .chip{background:#fff;color:var(--ink);border:1px solid var(--line);padding:4px 10px;border-radius:14px;font-weight:400;font-size:13px}
 .chip:hover:not(:disabled){background:var(--jp);color:#fff}
 .none{color:var(--mut);font-size:14px}
+.tabs{display:flex;gap:8px;margin-bottom:20px}
+.tabs button{flex:1;background:#fff;color:var(--ink);border:2px solid var(--line);padding:14px;font-size:16px}
+.tabs button.on{background:var(--jp);color:#fff;border-color:var(--jp)}
+.tabs button:hover:not(:disabled):not(.on){background:#e3f6ea}
+.nc tbody tr{cursor:default}
+#dt{font-size:20px;margin:0 0 14px}
 .sel{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 label{font-size:13px;color:var(--mut);display:block;margin-bottom:4px}
 select,input{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff}
@@ -75,8 +81,12 @@ button:disabled{opacity:.5;cursor:wait}button:hover:not(:disabled){background:va
   <div class="live"><i></i><span id="upd">Conectando…</span></div>
 </header>
 <main>
+  <div class="tabs">
+    <button type="button" data-t="provincial" class="on">Voto provincial</button>
+    <button type="button" data-t="distrital">Voto distrital</button>
+  </div>
   <section class="card">
-    <h2>Registrar acta de mesa</h2>
+    <h2 id="ft">Registrar acta de mesa · Voto provincial</h2>
     <div class="search">
       <label for="q">Buscar por número de mesa</label>
       <input id="q" type="search" inputmode="numeric" placeholder="Escribe el número de mesa, ej. 004512" autocomplete="off">
@@ -96,6 +106,7 @@ button:disabled{opacity:.5;cursor:wait}button:hover:not(:disabled){background:va
   </section>
 
   <section>
+    <h2 id="dt">Resultados · Voto provincial</h2>
     <div class="kpis">
       <div class="kpi main"><span>Votos JP</span><b id="k1">0</b><em id="k1b">—</em></div>
       <div class="kpi"><span>% sobre votos válidos</span><b id="k2">0%</b><em id="k2b">—</em></div>
@@ -104,6 +115,7 @@ button:disabled{opacity:.5;cursor:wait}button:hover:not(:disabled){background:va
     </div>
     <div class="charts">
       <div class="card wide"><h2>Resultados por partido</h2><div id="tabla"></div></div>
+      <div class="card wide"><h2>Quién va ganando en cada distrito</h2><div id="lid"></div></div>
       <div class="card"><h2>JP frente al resto</h2><div class="box"><canvas id="c1"></canvas></div></div>
       <div class="card"><h2>Ranking de partidos</h2><div class="box"><canvas id="c2"></canvas></div></div>
       <div class="card wide"><h2>Votos por distrito: JP vs. otros</h2><div class="box"><canvas id="c3"></canvas></div></div>
@@ -136,7 +148,20 @@ const P = [
 ];
 const VALID = P.slice(0,10); // partidos (sin blanco/viciado)
 const $ = id => document.getElementById(id);
-let DATA = {centros:{},totales:{},filas:[]}, charts = {}, formTouched = false;
+let DATA = {centros:{},totales:{},filas:[]}, charts = {}, formTouched = false, TIPO = 'provincial';
+const NOMBRE = {provincial:'Voto provincial', distrital:'Voto distrital'};
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  if (b.dataset.t === TIPO) return;
+  TIPO = b.dataset.t;
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  $('ft').textContent = 'Registrar acta de mesa · ' + NOMBRE[TIPO];
+  $('dt').textContent = 'Resultados · ' + NOMBRE[TIPO];
+  DATA = {centros:{},totales:{},filas:[]}; formTouched = false; pendSel = '';
+  inputs.forEach(i => i.value = ''); $('sum').textContent = '0'; $('msg').style.display = 'none';
+  $('upd').textContent = 'Cargando…';
+  loadDist(); $('dist').value = ''; $('dist').onchange();
+  render(); refresh();
+});
 const fmt = n => Number(n||0).toLocaleString('es-PE');
 
 // ---------- Formulario ----------
@@ -228,10 +253,10 @@ function show(t, ok){ const m=$('msg'); m.className=ok?'ok':'err'; m.textContent
 $('send').onclick = async () => {
   if (!$('dist').value || !$('local').value || !$('mesa').value) return show('Elige distrito, local y mesa.', false);
   if (inputs.some(i => i.value !== '' && Number(i.value) < 0)) return show('No se permiten votos negativos.', false);
-  const body = {distrito:$('dist').value, local:$('local').value, mesa:$('mesa').value};
+  const body = {tipo:TIPO, distrito:$('dist').value, local:$('local').value, mesa:$('mesa').value};
   inputs.forEach(i => body[i.dataset.k] = Number(i.value) || 0);
-  const t = Object.values(body).slice(3).reduce((a,b)=>a+b,0);
-  if (!confirm(`Mesa ${body.mesa} · ${t} votos en total. ¿Guardar?`)) return;
+  const t = P.reduce((a,p)=>a+body[p.k],0);
+  if (!confirm(`${NOMBRE[TIPO]} · Mesa ${body.mesa} · ${t} votos en total. ¿Guardar?`)) return;
   $('send').disabled = true;
   try {
     const r = await fetch(API, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(body)});
@@ -259,6 +284,29 @@ function renderTabla(T, valid, all){
       <div class="tr"><i style="width:${v/top*100}%"></i></div></div>`;
   }).join('');
   fixLogos($('tabla'));
+}
+
+function renderLideres(){
+  const D = {};
+  (DATA.filas||[]).forEach(r => {
+    const d = D[r.distrito] ||= {v:Array(VALID.length).fill(0), t:0, r:0};
+    VALID.forEach((_,i) => d.v[i] += r.votos[i]);
+    d.t++; if (r.votos.some(x=>x>0)) d.r++;
+  });
+  const ds = Object.keys(D).sort();
+  if (!ds.length){ $('lid').innerHTML = '<p class="none">Sin datos por distrito aún. Verifica que el Apps Script esté actualizado.</p>'; return; }
+  $('lid').innerHTML = `<div style="overflow-x:auto"><table class="pt nc"><thead><tr><th>Distrito</th><th>Va ganando</th><th>Votos</th><th>Ventaja sobre el 2.º</th><th>Avance</th></tr></thead><tbody>` +
+    ds.map(n => {
+      const d = D[n], o = d.v.map((v,i)=>({p:VALID[i],v})).sort((a,b)=>b.v-a.v);
+      const tot = o.reduce((a,x)=>a+x.v,0), w = o[0], s = o[1];
+      if (!tot) return `<tr><td>${n}</td><td>—</td><td>—</td><td>—</td><td>${(d.r/d.t*100).toFixed(0)}%</td></tr>`;
+      return `<tr${w.p.k==='jp'?' style="background:#e3f6ea"':''}><td>${n}</td>
+        <td><span class="lb" style="justify-content:flex-start">${logo(w.p)}${w.p.label}</span></td>
+        <td>${fmt(w.v)} (${(w.v/tot*100).toFixed(1)}%)</td>
+        <td>${w.v===s.v ? 'Empate con '+s.p.label : fmt(w.v-s.v)+' · '+s.p.label}</td>
+        <td>${(d.r/d.t*100).toFixed(0)}% (${d.r}/${d.t})</td></tr>`;
+    }).join('') + '</tbody></table></div><p class="none">Resultado parcial: cambia a medida que se reportan mesas. Las filas en verde son los distritos donde JP lidera.</p>';
+  fixLogos($('lid'));
 }
 
 let pendSel = '', pendList = [], pendDist = [];
@@ -321,7 +369,7 @@ function render(){
   mk('c2',{type:'bar',data:{labels:all12.map(p=>p.label),datasets:[{data:all12.map(p=>T[p.k]||0),backgroundColor:all12.map(p=>p.c),borderRadius:4}]},
     options:{...base,indexAxis:'y',plugins:{legend:{display:false}}}});
 
-  renderTabla(T, valid, all); renderPend();
+  renderTabla(T, valid, all); renderLideres(); renderPend();
   // Gráficos por distrito (requieren "filas" del Apps Script)
   const F = DATA.filas || [], D = {};
   F.forEach(r=>{
@@ -344,8 +392,12 @@ function render(){
 
 async function refresh(){
   try{
-    const r = await fetch(API+'?t='+Date.now());
-    DATA = await r.json();
+    const tipo = TIPO;
+    const r = await fetch(API+'?tipo='+tipo+'&t='+Date.now());
+    const j = await r.json();
+    if (tipo !== TIPO) return; // el usuario cambió de pestaña mientras cargaba
+    if (j.status === 'error'){ $('upd').textContent = j.message; return; }
+    DATA = j;
     if (!DATA.filas) DATA.filas = [];
     if (!formTouched || !$('dist').options.length) loadDist();
     render();
