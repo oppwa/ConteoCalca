@@ -140,8 +140,8 @@ let DATA = {centros:{},totales:{},filas:[]}, charts = {}, formTouched = false;
 const fmt = n => Number(n||0).toLocaleString('es-PE');
 
 // ---------- Formulario ----------
-// Logo: busca logos/<clave>.png; si no existe, muestra un círculo con las iniciales
-const logo = p => `<img class="logo" src="logos/${p.k}.png" alt="" data-c="${p.c}" data-i="${p.k==='jp'?'JP':p.label.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}">`;
+// Logo: busca <clave>.png junto al index.html; si no existe, muestra un círculo con las iniciales
+const logo = p => `<img class="logo" src="${p.k}.png" alt="" data-c="${p.c}" data-i="${p.k==='jp'?'JP':p.label.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}">`;
 function fixLogos(root){
   root.querySelectorAll('img.logo').forEach(i => i.onerror = () => {
     const s = document.createElement('span'); s.className = 'ph';
